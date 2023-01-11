@@ -1,0 +1,150 @@
+---
+- name: Apply WUfB Reports access control configuration
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Gather minimumal facts for properties like current date
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+
+    # Get this here because: (1) fail fast if doesn't exist (2) need resource ID to assign permissions below
+    - name: Gather primary Log Analytics workspace
+      block:
+        - name: Get primary Log Analytics workspace
+          azure.azcollection.azure_rm_resource_info:
+            resource_group: "{{ primary_workspace_resource_group }}"
+            provider: OperationalInsights
+            resource_type: workspaces
+            resource_name: "{{ primary_workspace_name }}"
+          register: primary_workspace
+        - name: Save primary workspace to variable
+          ansible.builtin.set_fact:
+            primary_workspace: "{{ primary_workspace.response[0] }}"
+
+    - name: Gather schema for UC tables
+      block:
+        - name: Get table schema from primary Log Analytics workspace
+          azure.azcollection.azure_rm_resource_info:
+            resource_group: "{{ primary_workspace_resource_group }}"
+            provider: OperationalInsights
+            resource_type: workspaces
+            resource_name: "{{ primary_workspace_name }}/tables"
+          register: primary_workspace_tables
+        - name: Save UC table schema to variable
+          ansible.builtin.set_fact:
+            uc_tables: "{{ primary_workspace_tables | community.general.json_query(uc_tables_query) }}"
+          vars:
+            uc_tables_query: "response[?starts_with(name, 'UC')]"
+
+    - name: Setup target resource group
+      azure.azcollection.azure_rm_resourcegroup:
+        name: "{{ target_resource_group }}"
+        location: "{{ target_resource_location }}"
+
+    - name: Create Log Analytics workspaces for each scope
+      loop: "{{ scopes | dict2items }}"
+      loop_control:
+        loop_var: scope_item
+      ansible.builtin.include_tasks: tasks/create_workspace.yml
+
+    - name: Setup data collection endpoint
+      block:
+        - name: Setup data collection endpoint resource
+          azure.azcollection.azure_rm_resource:
+            api_version: "2021-09-01-preview"
+            resource_group: "{{ target_resource_group }}"
+            provider: Insights
+            resource_type: dataCollectionEndpoints
+            resource_name: "{{ target_resource_prefix }}scope-connector"
+            body:
+              location: "{{ target_resource_location }}"
+              properties: {}
+              tags:
+                wufb_scope_id: "tenant"
+          register: create_dce_result
+        - name: Save DCE resource ID and logs ingestion endpoint for subsequent tasks
+          ansible.builtin.set_fact:
+            dce_resource_id: "{{ create_dce_result.response.id }}"
+            dce_logs_ingestion_endpoint: "{{ create_dce_result.response.properties.logsIngestion.endpoint }}"
+            # Will append the DCR and streams later for ingestion
+            # https://wufb-reports-scope-connector-fvxj.westus2-1.ingest.monitor.azure.com/dataCollectionRules/dcr-0c306c242dc744bbabe30c9d69a29810/streams/Custom-UCClient?api-version=2021-11-01-preview
+
+    - name: Setup data collection rule for each scope
+      loop: "{{ scopes | dict2items }}"
+      loop_control:
+        loop_var: scope_item
+      ansible.builtin.include_tasks: tasks/create_dcr.yml
+
+    - name: Create storage account for function app
+      azure.azcollection.azure_rm_storageaccount:
+        resource_group: "{{ target_resource_group }}"
+        name: "{{ function_app_storage_accout_name }}"
+        type: Standard_LRS
+      register: create_storage_account_result
+
+    - name: Setup function app
+      block:
+        - name: Create function app
+          azure.azcollection.azure_rm_functionapp:
+            resource_group: "{{ target_resource_group }}"
+            name: "{{ target_resource_prefix }}scope-connector"
+            storage_account: "{{ function_app_storage_accout_name }}"
+            app_settings:
+              AZURE_SUBSCRIPTION_ID: "{{ subscription_id }}"
+              PRIMARY_WORKSPACE_RESOURCE_GROUP: "{{ primary_workspace_resource_group }}"
+              PRIMARY_WORKSPACE_NAME: "{{ primary_workspace_name }}"
+              MAX_DAYS_TO_SYNC: "{{ function_app_max_days_to_sync }}"
+              # TARGET_RESOURCE_GROUP: "{{ target_resource_group }}"
+              # DCE_LOGS_INGESTION_ENDPOINT: "{{ dce_logs_ingestion_endpoint }}"
+          register: create_function_app_result
+        - name: Get function app
+          azure.azcollection.azure_rm_functionapp_info:
+            resource_group: "{{ target_resource_group }}"
+            name: "{{ target_resource_prefix }}scope-connector"
+          register: get_function_app_result
+        - name: Configure function app to use system assigned identity
+          azure.azcollection.azure_rm_resource:
+            api_version: "2021-01-15"
+            resource_group: "{{ target_resource_group }}"
+            provider: Web
+            resource_type: sites
+            resource_name: "{{ target_resource_prefix }}scope-connector"
+            body:
+              location: "{{ target_resource_location }}"
+              identity:
+                type: "SystemAssigned"
+              properties:
+                serverFarmId: "{{ get_function_app_result.ansible_info.azure_functionapps[0].server_farm_id }}"
+          register: configure_function_app_result
+        - name: Save scope connector identity
+          ansible.builtin.set_fact:
+            scope_connector_identity: "{{ configure_function_app_result.response.identity }}"
+
+    - name: Authorize function app
+      block:
+        - name: Authorize scope connector to read from primary workspace
+          azure.azcollection.azure_rm_roleassignment:
+            scope: "{{ primary_workspace.id }}"
+            assignee_object_id: "{{ scope_connector_identity.principalId }}"
+            role_definition_id: # Log Analytics Reader
+              "/subscriptions/15820d8b-8b26-4182-8db6-7bd2be4491f6/providers/Microsoft.Authorization/roleDefinitions/73c42c96-874c-492b-b04d-ab87d138a893"
+        - name: Authorize scope connector to publish to the DCE using each scoped DCR
+          loop: "{{ scopes | dict2items }}"
+          loop_control:
+            loop_var: scope_item
+          azure.azcollection.azure_rm_roleassignment:
+            scope: "{{ scope_item.value.dcr_resource_id }}"
+            assignee_object_id: "{{ scope_connector_identity.principalId }}"
+            role_definition_id: # Monitoring Metrics Publisher
+              "/subscriptions/15820d8b-8b26-4182-8db6-7bd2be4491f6/providers/Microsoft.Authorization/roleDefinitions/3913510d-42f4-4e42-8a64-420c390055eb"
+
+# TODO: authorize the app to call Graph
+# https://learn.microsoft.com/en-us/azure/app-service/tutorial-connect-app-access-microsoft-graph-as-app-javascript?tabs=azure-cli
+# https://powers-hell.com/2022/09/12/authenticate-to-graph-in-azure-functions-with-managed-identites/
+
+# TODO: Deploy function app
+# az functionapp deployment source config-zip \
+# -g {myRG}} -n {myAppName} \
+# --src {zipFilePathLocation}
+# func azure functionapp publish <FunctionAppName>

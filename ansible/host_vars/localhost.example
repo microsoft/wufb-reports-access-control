@@ -1,0 +1,38 @@
+---
+# Required configuration
+
+## Tenant info
+tenant_id: <guid>
+subscription_id: <guid>
+
+## Define access scopes and associated Azure AD group (idenitifed by objectId)
+scopes:
+  contoso:
+    azure_ad_group_id: ~
+  fabrikam:
+    azure_ad_group_id: ~
+
+## Properties for the primary workspace to be used as input for data transformations
+primary_workspace_name: <name>
+primary_workspace_resource_group: <resource_group>
+
+## All resources will be deployed to this location (e.g. westus2)
+target_resource_location: <location>
+
+# Optional configuration
+
+## All resources will be created under this group
+target_resource_group: wufb-reports-access-control
+
+## All resources will use this prefix and will be suffixed by the
+## playbook with a resource type or scope.
+target_resource_prefix: wufb-reports-
+
+## Storage account for function app
+function_app_storage_accout_name: wufbreportsscopes
+
+## Maximum number of days to sync
+function_app_max_days_to_sync: 7
+
+# Python 3.11 has breaking changes to the `inspect`` module. Use 3.10 for now.
+ansible_python_interpreter: "/usr/local/bin/python3.10"

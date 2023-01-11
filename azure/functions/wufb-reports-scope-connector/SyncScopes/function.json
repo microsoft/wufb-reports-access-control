@@ -1,0 +1,11 @@
+{
+  "bindings": [
+    {
+      "name": "myTimer",
+      "type": "timerTrigger",
+      "direction": "in",
+      "schedule": "0 */60 * * * *"
+    }
+  ],
+  "scriptFile": "../dist/SyncScopes/index.js"
+}

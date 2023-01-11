@@ -1,0 +1,45 @@
+---
+# When creating the target table we need to remove the `id` field from the source
+# table and change to custom log format.
+- name: "Create workspace table : Set context variables"
+  vars:
+    schema_replacement:
+      name: "{{ target_table.name }}_CL"
+      properties:
+        schema:
+          name: "{{ target_table.name }}_CL"
+          tableSubType: "Classic"
+          tableType: "CustomLog"
+          # standardColumns:
+          #   - name: "OriginTimeGenerated"
+          #     type: "datetime"
+          #     description: "The time the snapshot generated this specific record at the origin."
+          #     isDefaultDisplay: true
+          #     isHidden: false
+          columns:
+            - name: "OriginTimeGenerated_CF"
+              type: "datetime"
+              description: "The time the snapshot generated this specific record at the origin."
+              isDefaultDisplay: true
+              isHidden: false
+  ansible.builtin.set_fact:
+    target_resource_name: "{{ target_workspace_name }}/tables/{{ target_table.name }}_CL"
+    target_resource_body: "{{ target_table | combine({'id': omit}, schema_replacement, list_merge='append', recursive=true) }}"
+
+# - name: "Debug"
+#   debug:
+#     msg: "{{ target_resource_body }}"
+
+# - name: "Fail"
+#   assert:
+#     that: false
+
+- name: "Create workspace table : Create resource {{ target_resource_name }}"
+  azure.azcollection.azure_rm_resource:
+    api_version: "2021-12-01-preview"
+    resource_group: "{{ target_resource_group }}"
+    provider: OperationalInsights
+    resource_type: workspaces
+    resource_name: "{{ target_resource_name }}"
+    body: "{{ target_resource_body }}"
+  register: create_table_result

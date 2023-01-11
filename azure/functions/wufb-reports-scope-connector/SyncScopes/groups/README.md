@@ -1,0 +1,1 @@
+Add CSV files to this folder for each scope with a list of Azure AD Device ID to include.

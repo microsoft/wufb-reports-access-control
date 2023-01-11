@@ -1,14 +1,97 @@
-# Project
+# WUfB Reports Access Control
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+## Authorization
 
-As the maintainer of this project, please make a few updates:
+### Create a service principal
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+### Authorize service principal for subscription
+
+- Access control (IAM)
+  - Add role assignment. Needs Owner to have permission to assign RBAC to other resources created.
+
+### Authorize service principal for Graph APIs
+
+- Application.ReadWrite.OwnedBy
+- GroupMember.Read.All
+
+### Generate client secret
+
+### Add credentials file
+
+https://docs.ansible.com/ansible/latest/scenario_guides/guide_azure.html#storing-in-a-file
+
+```ini
+[default]
+subscription_id=xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+client_id=xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+secret=xxxxxxxxxxxxxxxxx
+tenant=xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+## Ansible
+
+### Install Azure collection and pre-requisites
+
+```bash
+ansible-galaxy collection install azure.azcollection
+pip install -r ~/.ansible/collections/ansible_collections/azure/azcollection/requirements-azure.txt
+```
+
+### Install Node.js 18
+
+### Install Azure function core tools
+
+https://github.com/Azure/azure-functions-core-tools
+
+#### Windows
+
+```bash
+npm i -g azure-functions-core-tools@4 --unsafe-perm true
+```
+
+#### Mac
+
+```bash
+brew tap azure/functions
+brew install azure-functions-core-tools@4
+```
+
+### Login to Azure
+
+- For authentication with Azure you can pass parameters, set environment variables, use a profile stored in ~/.azure/credentials, or log in before you run your tasks or playbook with `az login`.
+- Authentication is also possible using a service principal or Active Directory user.
+- To authenticate via service principal, pass subscription_id, client_id, secret and tenant or set environment variables AZURE_SUBSCRIPTION_ID, AZURE_CLIENT_ID, AZURE_SECRET and AZURE_TENANT.
+- To authenticate via Active Directory user, pass ad_user and password, or set AZURE_AD_USER and AZURE_PASSWORD in the environment.
+- Alternatively, credentials can be stored in `~/.azure/credentials`. This is an ini file containing a `[default]` section and the following keys: subscription_id, client_id, secret and tenant or subscription_id, ad_user and password. It is also possible to add additional profiles. Specify the profile by passing profile or setting AZURE_PROFILE in the environment.
+
+### Configure secure vars
+
+Add `scope_connector_credentials.yml` to `secure_vars`.
+
+### Customize host vars
+
+Customize scopes and other vars in `host_vars/localhost`.
+
+### Run the playbook
+
+```bash
+ansible-playbook -i inventory site.yml
+```
+
+### Waiting for resources to be ready
+
+```yaml
+    - name: Wait for namespace to be ready
+      azure_rm_resource_facts:
+        api_version: '2017-04-01'
+        resource_group: "{{ resource_group }}"
+        provider: eventhub
+        resource_type: namespaces
+        resource_name: "{{ namespacename }}"
+      register: output
+      until: output.response[0].properties.status == 'Active'
+      delay: 10
+```
 
 ## Contributing
 

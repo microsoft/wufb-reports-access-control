@@ -1,0 +1,99 @@
+---
+# Data collection rules govern the flow of data into a Log Analytics workspace.
+
+# Initialize variables for subsequent tasks.
+- name: "Setup DCR : Set context variables"
+  ansible.builtin.set_fact:
+    target_resource_name: "{{ target_resource_prefix }}{{ scope_item.key }}"
+    dcr_stream_declarations: {}
+    dcr_data_flows: []
+
+# Stream declarations define the schema for incoming data.
+#   Remove TenantId column which is system generated, and
+#   any keys other than `name` and `type`.
+- name: "Setup DCR : Define stream declarations from UC table schema"
+  loop: "{{ uc_tables }}"
+  loop_control:
+    label: "{{ uc_table.name }}"
+    loop_var: uc_table
+  vars:
+    stream_name: "Custom-{{ uc_table.name }}_IN"
+    stream_columns: "{{ uc_table.properties.schema.standardColumns |
+      selectattr('name', 'ne', 'TenantId') |
+      ansible.utils.remove_keys(target=['description', 'isDefaultDisplay', 'isHidden']) }}"
+    stream_declaration: |
+      {{
+        {
+          stream_name: {
+            "columns": stream_columns
+          }
+        }
+      }}
+  ansible.builtin.set_fact:
+    dcr_stream_declarations: "{{ dcr_stream_declarations | combine(stream_declaration, recursive=true) }}"
+
+# Data flows define which input streams are mapped to an output
+# stream and destination.
+- name: "Setup DCR : Define data flows from UC table schema"
+  loop: "{{ uc_tables }}"
+  loop_control:
+    label: "{{ uc_table.name }}"
+    loop_var: uc_table
+  vars:
+    input_stream_name: "Custom-{{ uc_table.name }}_IN"
+    output_stream_name: "Custom-{{ uc_table.name }}_CL"
+    data_flow: |
+      {{
+        {
+          "streams": [input_stream_name],
+          "destinations": ["targetWorkspace"],
+          "transformKql": "source | extend OriginTimeGenerated_CF = TimeGenerated",
+          "outputStream": output_stream_name
+        }
+      }}
+  ansible.builtin.set_fact:
+    dcr_data_flows: "{{ dcr_data_flows + [data_flow] }}"
+
+# Create the DCR using the previous definitions and gathered facts.
+- name: "Setup DCR : Setup data collection rule {{ target_resource_name }}"
+  azure.azcollection.azure_rm_resource:
+    api_version: "2021-09-01-preview"
+    resource_group: "{{ target_resource_group }}"
+    provider: Insights
+    resource_type: dataCollectionRules
+    resource_name: "{{ target_resource_name }}"
+    body:
+      location: "{{ target_resource_location }}"
+      properties:
+        dataCollectionEndpointId: "{{ dce_resource_id }}"
+        streamDeclarations: "{{ dcr_stream_declarations }}"
+        destinations:
+          logAnalytics:
+            - name: "targetWorkspace"
+              workspaceResourceId: "{{ scope_item.value.workspace_resource_id }}"
+        dataFlows: "{{ dcr_data_flows }}"
+  register: setup_dcr_result
+
+- name: "Setup DCR : Save resource ID"
+  vars:
+    revised_scope: |
+      {{
+        {
+          scope_item.key: {
+            "dcr_resource_id": setup_dcr_result.response.id,
+            "dcr_immutable_id": setup_dcr_result.response.properties.immutableId
+          }
+        }
+      }}
+  ansible.builtin.set_fact:
+    scopes: "{{ scopes | combine(revised_scope, recursive=true) }}"
+    dcr_immutable_id: "{{ setup_dcr_result.response.properties.immutableId }}"
+
+# Tagging the workspace allows the Azure Function to discover which rule to use to import to the workspace.
+- name: "Setup DCR : Tag log analytics workspace with DCR id : {{ target_resource_name }}"
+  azure.azcollection.azure_rm_loganalyticsworkspace:
+    resource_group: "{{ target_resource_group }}"
+    location: "{{ target_resource_location }}"
+    name: "{{ target_resource_name }}"
+    tags:
+      wufb_scope_dcr_immutable_id: "{{ dcr_immutable_id }}"

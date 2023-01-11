@@ -1,0 +1,4 @@
+secure_vars/*.yml
+state_vars/*.yml
+host_vars/localhost
+archive/

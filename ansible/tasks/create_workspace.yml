@@ -1,0 +1,51 @@
+---
+- name: "Create workspace : Assign context variables"
+  ansible.builtin.set_fact:
+    target_workspace_name: "{{ target_resource_prefix }}{{ scope_item.key }}"
+
+- name: "Create workspace : Create log analytics workspace {{ target_workspace_name }}"
+  azure.azcollection.azure_rm_loganalyticsworkspace:
+    resource_group: "{{ target_resource_group }}"
+    location: "{{ target_resource_location }}"
+    name: "{{ target_workspace_name }}"
+    tags:
+      wufb_scope_id: "{{ scope_item.key }}"
+      wufb_scope_azure_ad_group_id: "{{ scope_item.value.azure_ad_group_id }}"
+  register: create_workspace_result
+
+- name: "Save workspace ID for later"
+  vars:
+    revised_scope: |
+      {{
+        {
+          scope_item.key: {
+            "workspace_resource_id": create_workspace_result.id
+          }
+        }
+      }}
+  ansible.builtin.set_fact:
+    scopes: "{{ scopes | combine(revised_scope, recursive=true) }}"
+
+- name: "Create workspace : Wait for workspace to be ready {{ target_workspace_name }}"
+  azure.azcollection.azure_rm_resource_info:
+    resource_group: "{{ target_resource_group }}"
+    provider: OperationalInsights
+    resource_type: workspaces
+    resource_name: "{{ target_workspace_name }}"
+  register: output
+  until: output.response[0].properties.provisioningState == 'Succeeded'
+  delay: 5
+  retries: 6
+
+- name: "Create workspace : Pause for 3 seconds as Azure needs additional time before creating tables"
+  ansible.builtin.pause:
+    seconds: 3
+
+- name: "Create workspace : Setup tables"
+  tags:
+    - setup_workspace_tables
+  loop: "{{ uc_tables }}"
+  loop_control:
+    loop_var: target_table
+    label: "{{ target_table.name }}"
+  ansible.builtin.include_tasks: create_workspace_table.yml
