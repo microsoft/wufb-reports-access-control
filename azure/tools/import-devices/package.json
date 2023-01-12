@@ -1,0 +1,23 @@
+{
+  "name": "import-devices",
+  "packageManager": "yarn@3.3.0",
+  "bin": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "prestart": "yarn run build",
+    "start": "node dist/index",
+    "test": "echo \"No tests yet...\""
+  },
+  "dependencies": {
+    "@azure/identity": "^3.1.2",
+    "@microsoft/microsoft-graph-client": "^3.0.4",
+    "isomorphic-fetch": "^3.0.0"
+  },
+  "devDependencies": {
+    "@microsoft/microsoft-graph-types": "^2.25.0",
+    "@types/node": "^18.11.18",
+    "ts-node": "^10.9.1",
+    "typescript": "^4.9.4"
+  }
+}
