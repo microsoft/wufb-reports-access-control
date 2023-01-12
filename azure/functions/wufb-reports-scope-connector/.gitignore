@@ -1,5 +1,6 @@
 ##  Groups
-SyncScopes/groups/*.csv
+SyncScopes/groups
+!SyncScopes/groups/README.md
 
 #
 .yarn
@@ -93,6 +94,7 @@ typings/
 # TypeScript output
 dist
 out
+dist.zip
 
 # Azure Functions artifacts
 bin
