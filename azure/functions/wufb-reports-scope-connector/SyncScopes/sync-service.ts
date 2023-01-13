@@ -145,10 +145,7 @@ export default class SyncService {
       if (table.name === "UCDOAggregatedStatus")
         continue;
 
-      if (table.name !== "UCClient")
-        continue;
-
-      // await this.syncTableWithCompare(workspace, table, allowedDevices);
+      await this.syncTableWithCompare(workspace, table, allowedDevices);
       await this.syncTableWithCursor(workspace, table, allowedDevices);
     }
 
