@@ -9,6 +9,7 @@ import { Client as GraphClient } from "@microsoft/microsoft-graph-client";
 import LogCursor from "./log-cursor";
 import * as fs from 'fs';
 import * as readline from 'readline';
+import findFast from "./find-fast";
 
 // Row limit controls the number of records per page request.
 // There is a hard 30k per response service limitation this must fall within.
@@ -152,54 +153,21 @@ export default class SyncService {
     this.log("Finished syncing workspace", workspace.name, "with scope", workspace.tags.wufb_scope_id);
   }
 
+  // This sync pass determines the last {timegenerated,device} synced to the target, then performs
+  // a full comparison with the source to ensure it has all records.
+  //
+  // It's necessary because the job could run at the same time data is being written
+  // to the source table. Write order to the source table is not guaranteed so
+  // unfortunately one cannot assume the last record written to the target included
+  // the full set of records that preceded it if a source table write job was in progress.
   async syncTableWithCompare(workspace: Workspace, table: Table, allowedDevices: string[]) {
     let initialCursor = await this.getLatestCursor(workspace, table);
     if (!initialCursor) return;
 
     this.log("Comparison syncing table", table.name, "from workspace", workspace.name);
 
-    const secondaryKeyName = this.getSecondaryKeyName(table.name);
-
-    // Source: Get count of items
-    let kustoQuery = `${table.name}`
-      + ` | where TimeGenerated == todatetime("${initialCursor.timeGenerated.toISOString()}")`
-      + (allowedDevices.length ? ` and ${secondaryKeyName} in~ (${allowedDevices.map(d => `"${d}"`).join(",")})` : ``)
-      + ` | count`;
-
-    // this.log("Query:", kustoQuery);
-    let result = await this.logsQueryClient.queryWorkspace(this.primaryWorkspace.customerId, kustoQuery, {
-      duration: `P${this.maxDaysToSync}D`
-    });
-    this.log("Query result:", JSON.stringify(result));
-
-    if (result.status !== LogsQueryResultStatus.Success) {
-      throw new Error("Delta count query failed");
-    }
-    const sourceCount = result.tables[0].rows[0][0] as number;
-
-    // Target: Get count of items
-    kustoQuery = `${table.name}_CL | where OriginTimeGenerated_CF == todatetime("${initialCursor.timeGenerated.toISOString()}") | count`;
-
-    this.log("Query:", kustoQuery);
-    result = await this.logsQueryClient.queryWorkspace(workspace.customerId, kustoQuery, {
-      duration: `P${this.maxDaysToSync}D`
-    });
-    this.log("Query result:", JSON.stringify(result));
-
-    if (result.status !== LogsQueryResultStatus.Success) {
-      throw new Error("Delta count query failed");
-    }
-    const targetCount = result.tables[0].rows[0][0] as number;
-
-    // If missing records perform delta sync else done
-    // if (sourceCount <= targetCount) {
-    //   this.log(`No need to sync. { sourceCount = ${sourceCount}, targetCount = ${targetCount} }`);
-    //   return;
-    // } else {
-    //   this.log(`Performing comparison sync since there are ${sourceCount - targetCount} new records.`);
-    // }
-
     // Get all the IDs from the target table
+    const secondaryKeyName = this.getSecondaryKeyName(table.name);
     let cursor = new LogCursor(initialCursor.timeGenerated);
     let pageCount = 0;
     let page: LogsTable;
@@ -220,26 +188,28 @@ export default class SyncService {
 
       if (++pageCount === MAX_PAGES) break;
     }
+    disallowedDevices.sort((a,b) => a.localeCompare(b));
 
     // Get the DCR for this scope
     let ruleId = workspace.tags?.wufb_scope_dcr_immutable_id;
+    if (!ruleId) {
+      throw new Error("Unable to find data collection rule tag wufb_scope_dcr_immutable_id on workspace " + workspace.name);
+    }
+
+    // This alternative was considered where the DCR is tagged with a scope ID instead. For now, obtain from the workspace.
+    //
     // for await (let dcr of this.monitorClient.dataCollectionRules.listBySubscription()) {
     //   if (dcr.tags.wufb_scope_id === workspace.tags.wufb_scope_id) {
     //     ruleId = dcr.immutableId;
     //     break;
     //   }
     // }
-    if (!ruleId) {
-      throw new Error("Unable to find data collection rule tag wufb_scope_dcr_immutable_id on workspace " + workspace.name);
-    }
 
     // Get records from the primary table in batches
     cursor = new LogCursor(initialCursor.timeGenerated);
     pageCount = 0;
     while ((page = await this.getNextPage(this.primaryWorkspace, table.name, cursor, {
-      exactTime: true,
-      allowedDevices,
-      disallowedDevices
+      exactTime: true
     })).rows.length) {
       // Update cursor for next run before filtering
       const nextCursor = this.getNextCursor(page);
@@ -248,11 +218,16 @@ export default class SyncService {
       }
       cursor = nextCursor;
 
+      // Filter page data to remove devices that don't belong to this scope
+      const notInScopeCount = await this.filterPageAllowedDevices(page, allowedDevices);
+      const alreadyPresentCount = await this.filterPageDisallowedDevices(page, disallowedDevices);
+      this.log(`${notInScopeCount} rows were not intended for the target scope and ${alreadyPresentCount} rows were already present in the destination workspace.`);
+
       // Write remaining data to the target
       if (page.rows.length) {
         await this.writePage(ruleId, `Custom-${table.name}_IN`, page);
       } else {
-        this.log("No rows in the processed batch were intended for the target scope and therefore all were omitted.");
+        this.log(`No remaining records to write.`);
       }
 
       if (++pageCount === MAX_PAGES) break;
@@ -275,20 +250,23 @@ export default class SyncService {
 
     // Get the DCR for this scope
     let ruleId = workspace.tags?.wufb_scope_dcr_immutable_id;
+    if (!ruleId) {
+      throw new Error("Unable to find data collection rule tag wufb_scope_dcr_immutable_id on workspace " + workspace.name);
+    }
+
+    // This alternative was considered where the DCR is tagged with a scope ID instead. For now, obtain from the workspace.
+    //
     // for await (let dcr of this.monitorClient.dataCollectionRules.listBySubscription()) {
     //   if (dcr.tags.wufb_scope_id === workspace.tags.wufb_scope_id) {
     //     ruleId = dcr.immutableId;
     //     break;
     //   }
     // }
-    if (!ruleId) {
-      throw new Error("Unable to find data collection rule tag wufb_scope_dcr_immutable_id on workspace " + workspace.name);
-    }
 
     // Get records from the primary table in batches
     let pageCount = 0;
     let page: LogsTable;
-    while ((page = await this.getNextPage(this.primaryWorkspace, table.name, cursor, { allowedDevices })).rows.length) {
+    while ((page = await this.getNextPage(this.primaryWorkspace, table.name, cursor)).rows.length) {
       // Update cursor for next run before filtering
       const nextCursor = this.getNextCursor(page);
       if (JSON.stringify(cursor) === JSON.stringify(nextCursor)) {
@@ -297,13 +275,14 @@ export default class SyncService {
       cursor = nextCursor;
 
       // Filter page data to remove devices that don't belong to this scope
-      // await this.filterPageDevices(page, allowedDevices);
+      const notInScopeCount = await this.filterPageAllowedDevices(page, allowedDevices);
+      this.log(`${notInScopeCount} rows were not intended for the target scope.`);
 
       // Write remaining data to the target
       if (page.rows.length) {
         await this.writePage(ruleId, `Custom-${table.name}_IN`, page);
       } else {
-        this.log("No rows in the processed batch were intended for the target scope and therefore all were omitted.");
+        this.log(`No remaining records to write.`);
       }
 
       if (++pageCount === MAX_PAGES) break;
@@ -376,23 +355,36 @@ export default class SyncService {
       this.warn(`${workspace.tags.wufb_scope_azure_ad_group_id} had no records and therefore ${workspace.name} will receive all records from the tenant.`);
     }
 
+    results.sort((a,b) => a.localeCompare(b));
     return results;
   }
 
   // Remove rows from the page that are not part of the scope
-  private async filterPageDevices(page: LogsTable, allowedDevices: string[]) {
-    if (!allowedDevices.length) return;
+  private async filterPageAllowedDevices(page: LogsTable, allowedDevices: string[]) {
+    let rowsFiltered = 0;
+    if (!allowedDevices.length) return rowsFiltered;
     const azureADDeviceIdIndex = page.columnDescriptors.findIndex(c => c.name === "AzureADDeviceId");
     for(let r = page.rows.length - 1; r >= 0; r--) {
-      // this.log(allowedDevices[0], " ", page.rows[r][azureADDeviceIdIndex]);
-      if (!allowedDevices.includes(page.rows[r][azureADDeviceIdIndex] as string)) {
-        // if (page.rows[r][azureADDeviceIdIndex].toString().startsWith("1")) {
-        //   this.warn(page.rows[r][azureADDeviceIdIndex] as string, "was not in", allowedDevices);
-        //   throw new Error();
-        // }
+      if (!findFast(allowedDevices, page.rows[r][azureADDeviceIdIndex] as string)) {
         page.rows.splice(r, 1);
+        rowsFiltered++;
       }
     }
+    return rowsFiltered;
+  }
+
+  // Remove rows from the page that are not part of the scope
+  private async filterPageDisallowedDevices(page: LogsTable, disallowedDevices: string[]) {
+    let rowsFiltered = 0;
+    if (!disallowedDevices.length) return rowsFiltered;
+    const azureADDeviceIdIndex = page.columnDescriptors.findIndex(c => c.name === "AzureADDeviceId");
+    for(let r = page.rows.length - 1; r >= 0; r--) {
+      if (findFast(disallowedDevices, page.rows[r][azureADDeviceIdIndex] as string)) {
+        page.rows.splice(r, 1);
+        rowsFiltered++;
+      }
+    }
+    return rowsFiltered;
   }
 
   // Write a page of records by connecting to the DCE and uploading records through a stream of the DCR
@@ -516,10 +508,10 @@ export default class SyncService {
         this.log(`[${workspace.name}.${tableName}]: ${result.tables[0].rows.length} rows returned.`);
         return result.tables[0]
       case LogsQueryResultStatus.PartialFailure:
-        this.error("Unexpected partial failure", kustoQuery, result.partialError);
-        throw new Error("Unexpected partial failure: " + kustoQuery + " " + result.partialError);
+        this.error("Unexpected partial failure", kustoQuery, "\n", result.partialError);
+        throw new Error(`Unexpected partial failure: ${kustoQuery}\n${result.partialError}`);
       default:
-        throw new Error("Unexpected status: " + kustoQuery);
+        throw new Error(`Unexpected status: ${kustoQuery}\n${result}`);
     }
   }
 
