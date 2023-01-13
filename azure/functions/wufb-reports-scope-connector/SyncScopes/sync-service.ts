@@ -108,7 +108,7 @@ export default class SyncService {
       }
     }
     if (!this.ingestionClient) {
-      this.error("Unable to find data collection endpoint with wufb_scope_id = tenant");
+      this.error(`Unable to find data collection endpoint with wufb_scope_id = tenant: ${JSON.stringify(dces)}`);
       return;
     }
 
@@ -335,36 +335,44 @@ export default class SyncService {
       return [];
     }
 
-    // let membersResponse = await this.graphClient.api(`/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device`).get();
+    const deviceListPath = `${this.context.executionContext.functionDirectory}/groups/${workspace.tags.wufb_scope_azure_ad_group_id}.csv`;
+    if (!fs.existsSync(deviceListPath)) {
+      // A file does not exist so load directly from Graph
+      // try {
+      //   this.log("Calling Graph ... " + `/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device`);
+      //   let membersResponse = await this.graphClient.api(`/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device`).get();
+      //   this.log(membersResponse);
+      // } catch(error: any) {
+      //   this.error(error);
+      // }
+      // TODO: Handle @odata.nextLink
+    } else {
+      // Open file for reading
+      try {
+        const fileStream = await this.createReadStreamAsync(deviceListPath);
 
-    // TODO: Handle @odata.nextLink
+        const rl = readline.createInterface({
+          input: fileStream,
+          crlfDelay: Infinity
+        });
 
-    // Open file for reading
-    try {
-      const deviceListPath = `${this.context.executionContext.functionDirectory}/groups/${workspace.tags.wufb_scope_azure_ad_group_id}.csv`;
-      const fileStream = await this.createReadStreamAsync(deviceListPath);
+        // Loop over lines of the file
+        for await (let line of rl) {
+          // Skip header
+          if (line.includes("AzureADDeviceId")) {
+            continue;
+          }
 
-      const rl = readline.createInterface({
-        input: fileStream,
-        crlfDelay: Infinity
-      });
-
-      // Loop over lines of the file
-      for await (let line of rl) {
-        // Skip header
-        if (line.includes("AzureADDeviceId")) {
-          continue;
+          // Strip quotes
+          line = line.replace(/\"/g, "");
+          const deviceId = line;
+          results.push(deviceId);
         }
 
-        // Strip quotes
-        line = line.replace(/\"/g, "");
-        const deviceId = line;
-        results.push(deviceId);
+        fileStream.close();
+      } catch(error) {
+        this.warn(error);
       }
-
-      fileStream.close();
-    } catch(error) {
-      this.warn(error);
     }
 
     if (!results.length) {
