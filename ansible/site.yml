@@ -41,6 +41,7 @@
       azure.azcollection.azure_rm_resourcegroup:
         name: "{{ target_resource_group }}"
         location: "{{ target_resource_location }}"
+      register: resource_group_response
 
     - name: Create Log Analytics workspaces for each scope
       loop: "{{ scopes | dict2items }}"
@@ -67,8 +68,6 @@
           ansible.builtin.set_fact:
             dce_resource_id: "{{ create_dce_result.response.id }}"
             dce_logs_ingestion_endpoint: "{{ create_dce_result.response.properties.logsIngestion.endpoint }}"
-            # Will append the DCR and streams later for ingestion
-            # https://wufb-reports-scope-connector-fvxj.westus2-1.ingest.monitor.azure.com/dataCollectionRules/dcr-0c306c242dc744bbabe30c9d69a29810/streams/Custom-UCClient?api-version=2021-11-01-preview
 
     - name: Setup data collection rule for each scope
       loop: "{{ scopes | dict2items }}"
@@ -91,12 +90,13 @@
             name: "{{ target_resource_prefix }}scope-connector"
             storage_account: "{{ function_app_storage_accout_name }}"
             app_settings:
+              FUNCTIONS_EXTENSION_VERSION: "~4"
+              WEBSITE_NODE_DEFAULT_VERSION: "~18"
+              WEBSITE_RUN_FROM_PACKAGE: "1"
               AZURE_SUBSCRIPTION_ID: "{{ subscription_id }}"
               PRIMARY_WORKSPACE_RESOURCE_GROUP: "{{ primary_workspace_resource_group }}"
               PRIMARY_WORKSPACE_NAME: "{{ primary_workspace_name }}"
               MAX_DAYS_TO_SYNC: "{{ function_app_max_days_to_sync }}"
-              # TARGET_RESOURCE_GROUP: "{{ target_resource_group }}"
-              # DCE_LOGS_INGESTION_ENDPOINT: "{{ dce_logs_ingestion_endpoint }}"
           register: create_function_app_result
         - name: Get function app
           azure.azcollection.azure_rm_functionapp_info:
@@ -123,7 +123,14 @@
 
     - name: Authorize function app
       block:
-        - name: Authorize scope connector to read from primary workspace
+        - name: Authorize scope connector to read resources in the resource group
+          # The function app needs access to read resources to discover DCE, DCRs, and workspaces
+          azure.azcollection.azure_rm_roleassignment:
+            scope: "{{ resource_group_response.state.id }}"
+            assignee_object_id: "{{ scope_connector_identity.principalId }}"
+            role_definition_id: # Reader
+              "/subscriptions/15820d8b-8b26-4182-8db6-7bd2be4491f6/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
+        - name: Authorize scope connector to read data from primary workspace
           azure.azcollection.azure_rm_roleassignment:
             scope: "{{ primary_workspace.id }}"
             assignee_object_id: "{{ scope_connector_identity.principalId }}"
@@ -143,8 +150,29 @@
 # https://learn.microsoft.com/en-us/azure/app-service/tutorial-connect-app-access-microsoft-graph-as-app-javascript?tabs=azure-cli
 # https://powers-hell.com/2022/09/12/authenticate-to-graph-in-azure-functions-with-managed-identites/
 
-# TODO: Deploy function app
-# az functionapp deployment source config-zip \
-# -g {myRG}} -n {myAppName} \
-# --src {zipFilePathLocation}
-# func azure functionapp publish <FunctionAppName>
+    - name: Deploy function app
+      tags:
+        - deploy_function_app
+      block:
+        - name: Build function app
+          ansible.builtin.command:
+            cmd: npm run build
+          args:
+            chdir: ../azure/functions/wufb-reports-scope-connector
+          changed_when: true
+
+        - name: Zip function app
+          community.general.archive:
+            path: ../azure/functions/wufb-reports-scope-connector/**
+            dest: ../azure/functions/wufb-reports-scope-connector.zip
+            format: zip
+            mode: 0600
+
+        - name: Upload function app
+          ansible.builtin.command:
+            cmd: >
+              az functionapp deployment source config-zip
+              -g {{ target_resource_group }}
+              -n {{ target_resource_prefix }}scope-connector
+              --src ../azure/functions/wufb-reports-scope-connector.zip
+          changed_when: true
