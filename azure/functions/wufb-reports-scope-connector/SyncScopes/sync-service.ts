@@ -1,15 +1,15 @@
+import { MonitorClient } from "@azure/arm-monitor";
 import { OperationalInsightsManagementClient, Table, Workspace } from "@azure/arm-operationalinsights";
 import { PipelineRequest, SendRequest } from "@azure/core-rest-pipeline";
 import { Context } from "@azure/functions";
 import { DefaultAzureCredential } from "@azure/identity";
-import { LogsQueryClient, LogsQueryResultStatus, LogsTable } from "@azure/monitor-query";
 import { LogsIngestionClient } from "@azure/monitor-ingestion";
-import { MonitorClient } from "@azure/arm-monitor";
+import { LogsQueryClient, LogsQueryResult, LogsQueryResultStatus, LogsTable } from "@azure/monitor-query";
 import { Client as GraphClient } from "@microsoft/microsoft-graph-client";
-import LogCursor from "./log-cursor";
 import * as fs from 'fs';
 import * as readline from 'readline';
 import findFast from "./find-fast";
+import LogCursor from "./log-cursor";
 
 // Row limit controls the number of records per page request.
 // There is a hard 30k per response service limitation this must fall within.
@@ -166,30 +166,6 @@ export default class SyncService {
 
     this.log("Comparison syncing table", table.name, "from workspace", workspace.name);
 
-    // Get all the IDs from the target table
-    const secondaryKeyName = this.getSecondaryKeyName(table.name);
-    let cursor = new LogCursor(initialCursor.timeGenerated);
-    let pageCount = 0;
-    let page: LogsTable;
-    const disallowedDevices: string[] = [];
-    while ((page = await this.getNextPage(workspace, `${table.name}_CL`, cursor, {
-      exactTime: true,
-      columns: [secondaryKeyName]
-    })).rows.length) {
-      const nextCursor = this.getNextCursor(page, cursor.timeGenerated);
-      if (JSON.stringify(cursor) === JSON.stringify(nextCursor)) {
-        throw new Error(`Pages must have unique cursors, but this page was the same as the last.\n${cursor}\n${page}`);
-      }
-      cursor = nextCursor;
-
-      if (page.rows.length) {
-        disallowedDevices.push(...page.rows.flat(1).map(v => v as string));
-      }
-
-      if (++pageCount === MAX_PAGES) break;
-    }
-    disallowedDevices.sort((a,b) => a.localeCompare(b));
-
     // Get the DCR for this scope
     let ruleId = workspace.tags?.wufb_scope_dcr_immutable_id;
     if (!ruleId) {
@@ -206,10 +182,12 @@ export default class SyncService {
     // }
 
     // Get records from the primary table in batches
-    cursor = new LogCursor(initialCursor.timeGenerated);
-    pageCount = 0;
+    let cursor = new LogCursor(initialCursor.timeGenerated);
+    let pageCount = 0;
+    let page: LogsTable;
     while ((page = await this.getNextPage(this.primaryWorkspace, table.name, cursor, {
-      exactTime: true
+      exactTime: true,
+      excludeRecordsFromWorkspace: workspace.name
     })).rows.length) {
       // Update cursor for next run before filtering
       const nextCursor = this.getNextCursor(page);
@@ -218,10 +196,14 @@ export default class SyncService {
       }
       cursor = nextCursor;
 
-      // Filter page data to remove devices that don't belong to this scope
+      // Filter page data to remove devices that don't belong to this scope.
+      //
+      // Note: Performance could be improved by filtering the devices on the data service side
+      // as part of the query, but in order to scale, the device lists would have to
+      // be written to blob storage for access as a Kusto external table. This added
+      // complexity is out of scope for now and instead apply the filters here.
       const notInScopeCount = await this.filterPageAllowedDevices(page, allowedDevices);
-      const alreadyPresentCount = await this.filterPageDisallowedDevices(page, disallowedDevices);
-      this.log(`${notInScopeCount} rows were not intended for the target scope and ${alreadyPresentCount} rows were already present in the destination workspace.`);
+      this.log(`${notInScopeCount} rows were not intended for the target scope.`);
 
       // Write remaining data to the target
       if (page.rows.length) {
@@ -484,7 +466,7 @@ export default class SyncService {
   // Paging works by ascending sort of records on TimeGenerated and AzureADDeviceId.
   // This will provide enough uniqueness to establish a cursor indexing the record set.
   private async getNextPage(workspace: Workspace, tableName: string, cursor: LogCursor,
-    { exactTime = false, columns, allowedDevices = [], disallowedDevices = [] }: { exactTime?: boolean, columns?: string[], allowedDevices?: string[], disallowedDevices?: string[] } = {}): Promise<LogsTable> {
+    { exactTime = false, excludeRecordsFromWorkspace: excludeFromExistingWorkspace, columns, allowedDevices = [], disallowedDevices = [] }: { exactTime?: boolean, excludeRecordsFromWorkspace?: string, columns?: string[], allowedDevices?: string[], disallowedDevices?: string[] } = {}): Promise<LogsTable> {
     const secondaryKeyName = this.getSecondaryKeyName(tableName.replace("_CL", ""));
     const timeGeneratedName = tableName.endsWith("_CL") ? "OriginTimeGenerated_CF" : "TimeGenerated";
     const kustoQuery = `${tableName} | where ((${timeGeneratedName} == todatetime("${cursor.timeGenerated.toISOString()}") and isnotempty(${secondaryKeyName})`
@@ -492,15 +474,23 @@ export default class SyncService {
       + (!exactTime ? ` or ${timeGeneratedName} > todatetime("${cursor.timeGenerated.toISOString()}"))` : ")")
       + (allowedDevices.length ? ` and ${secondaryKeyName} in~ (${allowedDevices.map(d => `"${d}"`).join(",")})` : "")
       + (disallowedDevices.length ? ` and ${secondaryKeyName} !in~ (${disallowedDevices.map(d => `"${d}"`).join(",")})` : "")
+      + (excludeFromExistingWorkspace ? ` | join kind=leftanti (workspace("${excludeFromExistingWorkspace}").${tableName}_CL) on AzureADDeviceId, $left.TimeGenerated == $right.OriginTimeGenerated_CF` : "")
       + ` | sort by ${timeGeneratedName} asc, ${secondaryKeyName} asc`
       + (columns ? ` | project ${columns.join(",")}` : "")
       + ` | limit ${ROW_LIMIT_PER_PAGE}`;
 
     this.log(`[${workspace.name}.${tableName}]: Getting records after cursor: ${JSON.stringify(cursor)}`);
-    // this.log(`[${workspace.name}.${tableName}]: ${kustoQuery}`);
-    const result = await this.logsQueryClient.queryWorkspace(workspace.customerId, kustoQuery, {
-      duration: `P${this.maxDaysToSync}D`
-    });
+
+    let result: LogsQueryResult;
+    try {
+      result = await this.logsQueryClient.queryWorkspace(workspace.customerId, kustoQuery, {
+        duration: `P${this.maxDaysToSync}D`
+      });
+    }
+    catch(error) {
+      this.log(`[${workspace.name}.${tableName}]: ${kustoQuery}`);
+      throw error;
+    }
 
     switch(result.status)
     {
