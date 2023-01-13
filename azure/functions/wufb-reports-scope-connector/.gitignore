@@ -94,7 +94,6 @@ typings/
 # TypeScript output
 dist
 out
-dist.zip
 
 # Azure Functions artifacts
 bin
