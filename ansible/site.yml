@@ -83,6 +83,8 @@
       register: create_storage_account_result
 
     - name: Setup function app
+      tags:
+        - function_app
       block:
         - name: Create function app
           azure.azcollection.azure_rm_functionapp:
@@ -122,6 +124,8 @@
             scope_connector_identity: "{{ configure_function_app_result.response.identity }}"
 
     - name: Authorize function app
+      tags:
+        - function_app
       block:
         - name: Authorize scope connector to read resources in the resource group
           # The function app needs access to read resources to discover DCE, DCRs, and workspaces
@@ -152,6 +156,7 @@
 
     - name: Deploy function app
       tags:
+        - function_app
         - deploy_function_app
       block:
         - name: Build function app

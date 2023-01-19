@@ -38,6 +38,8 @@
   retries: 6
 
 - name: "Create workspace : Pause for 3 seconds as Azure needs additional time before creating tables"
+  tags:
+    - setup_workspace_tables
   ansible.builtin.pause:
     seconds: 3
 
