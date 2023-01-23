@@ -1,3 +1,4 @@
+import "isomorphic-fetch";
 import { MonitorClient } from "@azure/arm-monitor";
 import { OperationalInsightsManagementClient, Table, Workspace } from "@azure/arm-operationalinsights";
 import { PipelineRequest, SendRequest } from "@azure/core-rest-pipeline";
