@@ -78,7 +78,7 @@
     - name: Create storage account for function app
       azure.azcollection.azure_rm_storageaccount:
         resource_group: "{{ target_resource_group }}"
-        name: "{{ function_app_storage_accout_name }}"
+        name: "{{ function_app_storage_accout_name }}{{ tenant_id[:4] }}"
         type: Standard_LRS
       register: create_storage_account_result
 
@@ -86,11 +86,14 @@
       tags:
         - function_app
       block:
+        - name: Set fact function app name
+          ansible.builtin.set_fact:
+            function_app_name: "{{ target_resource_prefix }}scope-connector-{{ tenant_id[:4] }}"
         - name: Create function app
           azure.azcollection.azure_rm_functionapp:
             resource_group: "{{ target_resource_group }}"
-            name: "{{ target_resource_prefix }}scope-connector"
-            storage_account: "{{ function_app_storage_accout_name }}"
+            name: "{{ function_app_name }}"
+            storage_account: "{{ function_app_storage_accout_name }}{{ tenant_id[:4] }}"
             app_settings:
               FUNCTIONS_EXTENSION_VERSION: "~4"
               WEBSITE_NODE_DEFAULT_VERSION: "~18"
@@ -103,7 +106,7 @@
         - name: Get function app
           azure.azcollection.azure_rm_functionapp_info:
             resource_group: "{{ target_resource_group }}"
-            name: "{{ target_resource_prefix }}scope-connector"
+            name: "{{ function_app_name }}"
           register: get_function_app_result
         - name: Configure function app to use system assigned identity
           azure.azcollection.azure_rm_resource:
@@ -111,7 +114,7 @@
             resource_group: "{{ target_resource_group }}"
             provider: Web
             resource_type: sites
-            resource_name: "{{ target_resource_prefix }}scope-connector"
+            resource_name: "{{ function_app_name }}"
             body:
               location: "{{ target_resource_location }}"
               identity:
@@ -178,6 +181,6 @@
             cmd: >
               az functionapp deployment source config-zip
               -g {{ target_resource_group }}
-              -n {{ target_resource_prefix }}scope-connector
+              -n {{ function_app_name }}
               --src ../azure/functions/wufb-reports-scope-connector.zip
           changed_when: true
