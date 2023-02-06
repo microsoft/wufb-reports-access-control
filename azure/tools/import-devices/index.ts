@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 import "isomorphic-fetch";
 import { DefaultAzureCredential } from "@azure/identity";
-import { Client as GraphClient } from "@microsoft/microsoft-graph-client";
+import { Client as GraphClient, GraphError } from "@microsoft/microsoft-graph-client";
 import { Device, Group } from "@microsoft/microsoft-graph-types";
 import { argv } from 'process';
 import fs from 'fs';
 import readline from 'readline';
 
 async function main() {
-  if (argv.length !== 4) {
-    console.log("Usage: import-devices <group-object-id> <device-list-file>");
+  if (argv.length !== 4 && (argv.length !== 5 || argv[4] !== "-createTestDevices")) {
+    console.log("Usage: import-devices <group-name> <device-list-file> [-createTestDevices]");
     return;
   }
 
   const groupName = argv[2];
-  const groupId = argv[2];
   const deviceListFilePath = argv[3];
+  const isTest = argv.length === 5;
 
   // Use the default credential which can be obtained through CLI sign-in or Azure managed identity
   const credential = new DefaultAzureCredential();
@@ -34,25 +34,12 @@ async function main() {
   const getGroupResponse = await graphClient.api(`/groups?$filter=displayName eq '${groupName}'`).get();
   let group: Group;
   if (getGroupResponse.value.length !== 1) {
-    // if (groups?.length > 1) {
-      console.error(`Unable to find exactly one group named ${groupName} in Azure AD.`, getGroupResponse);
-      return;
-    // }
-
-    // console.log(`Creating new group ${groupName}`);
-    // const g = {} as Group;
-    // g.displayName = groupName;
-    // g.mailEnabled = false;
-    // g.mailNickname = groupName;
-    // g.securityEnabled = false;
-    // g.groupTypes = [];
-    // group = await graphClient.api(`/groups`).post(g);
-    // console.log(`Created group:`, group);
+    console.error(`Unable to find exactly one group named ${groupName} in Azure AD.`, getGroupResponse);
+    return;
   } else {
     group = getGroupResponse.value[0];
   }
-  // console.log(group);
-  // return;
+  console.log(`Processing group ${groupName}`);
 
   // Open file for reading
   const fileStream = fs.createReadStream(deviceListFilePath);
@@ -73,9 +60,38 @@ async function main() {
     line = line.replace(/\"/g, "");
     const deviceId = line;
 
-    // Get device
-    const device = await graphClient.api(`/devices(deviceId='${deviceId}')`).get() as Device;
-    console.log("Located device", device.id);
+    // Get device to find its directory id
+    let device: Device;
+    try {
+      device = await graphClient.api(`/devices(deviceId='${deviceId}')`).get() as Device;
+      console.log("Located device", device.id);
+    } catch (error) {
+      if (isTest) {
+        const graphError = error as GraphError;
+        if (graphError.statusCode === 404) {
+          // Device not found, create a test device
+          console.log("Unable to find device", deviceId);
+          const d = {} as Device;
+          d.deviceId = deviceId;
+          d.displayName = "Test device " + d.deviceId;
+          d.operatingSystem = "Windows";
+          d.operatingSystemVersion = "10.0.20348.887";
+          d.accountEnabled = true;
+          d.alternativeSecurityIds = [
+            {
+              "type": 2,
+              "key": "Y3YxN2E1MWFlYw=="
+            }
+          ];
+          device = await graphClient.api(`/devices`).post(d) as Device;
+          console.log("Created test device", device.deviceId);
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
 
     // Add device to group
     const response = await graphClient.api(`/groups/${group.id}/members/$ref`).post(
@@ -83,9 +99,7 @@ async function main() {
         "@odata.id": `https://graph.microsoft.com/v1.0/directoryObjects/${device.id}`
       }
     );
-    console.log(response);
-
-    break;
+    console.log(`Added device ${device.deviceId} with object ID ${device.id}`);
   }
 }
 main();
