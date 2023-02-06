@@ -42,6 +42,7 @@
   vars:
     input_stream_name: "Custom-{{ uc_table.name }}_IN"
     output_stream_name: "Custom-{{ uc_table.name }}_CL"
+    #output_stream_name: "Microsoft-{{ uc_table.name }}_{{ ((uc_table.name == 'UCClientReadinessStatus') | ternary('Table', 'API')) }}"
     data_flow: |
       {{
         {
