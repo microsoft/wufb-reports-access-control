@@ -1,4 +1,5 @@
 secure_vars/*.yml
 state_vars/*.yml
-host_vars/localhost
+host_vars/*
+!host_vars/localhost.example
 archive/
