@@ -78,7 +78,7 @@
     - name: Create storage account for function app
       azure.azcollection.azure_rm_storageaccount:
         resource_group: "{{ target_resource_group }}"
-        name: "{{ function_app_storage_accout_name }}{{ tenant_id[:4] }}"
+        name: "{{ function_app_storage_accout_name }}{{ tenant_id[:4] }}" # If collisions occur, change to tenant_id | hash('sha1')[:24]
         type: Standard_LRS
       register: create_storage_account_result
 
@@ -132,34 +132,14 @@
         - function_app
         - function_app_authorize_graph
       block:
-        - name: Get SP for Microsoft Graph
-          ansible.builtin.command:
-            cmd: >
-              az ad sp list --display-name "Microsoft Graph" --query "[0].id" --out tsv
-          register: graphResourceId
-          changed_when: true
-        - name: Get role ID for Group.Read.All
-          ansible.builtin.command:
-            cmd: >
-              az ad sp list --display-name "Microsoft Graph"
-              --query "[0].appRoles[?value=='Group.Read.All' && contains(allowedMemberTypes, 'Application')].id"
-              --output tsv
-          register: groupReadAllRoleId
-          changed_when: true
-        - name: Set request body
-          ansible.builtin.set_fact:
-            appRoleAssignmentsBody:
-              principalId: "{{ scope_connector_identity.principalId }}"
-              resourceId: "{{ graphResourceId.stdout }}"
-              appRoleId: "{{ groupReadAllRoleId.stdout }}"
-        - name: Authorize Graph role
-          ansible.builtin.command:
-            cmd: az rest --method post --uri {{ uri }} --body "{{ appRoleAssignmentsBody }}" --headers "Content-Type=application/json"
-          register: groupReadAllRoleId
-          changed_when: true
-          failed_when: groupReadAllRoleId.rc != 0 and not groupReadAllRoleId.stderr is search('already exists')
+        - name: Authorize Group.Read.All
+          ansible.builtin.include_tasks: tasks/authorize_graph_role.yml
           vars:
-            uri: "https://graph.microsoft.com/v1.0/servicePrincipals/{{ scope_connector_identity.principalId }}/appRoleAssignments"
+            graph_role_name: "Group.Read.All"
+        - name: Authorize Device.Read.All
+          ansible.builtin.include_tasks: tasks/authorize_graph_role.yml
+          vars:
+            graph_role_name: "Device.Read.All"
 
     - name: Authorize function app to workspaces and publishing endpoints
       tags:

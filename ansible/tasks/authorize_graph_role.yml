@@ -1,0 +1,29 @@
+---
+- name: Get SP for Microsoft Graph
+  ansible.builtin.command:
+    cmd: >
+      az ad sp list --display-name "Microsoft Graph" --query "[0].id" --out tsv
+  register: graphResourceId
+  changed_when: true
+- name: Get role ID
+  ansible.builtin.command:
+    cmd: >
+      az ad sp list --display-name "Microsoft Graph"
+      --query "[0].appRoles[?value=='{{ graph_role_name }}' && contains(allowedMemberTypes, 'Application')].id"
+      --output tsv
+  register: roleId
+  changed_when: true
+- name: Set request body
+  ansible.builtin.set_fact:
+    appRoleAssignmentsBody:
+      principalId: "{{ scope_connector_identity.principalId }}"
+      resourceId: "{{ graphResourceId.stdout }}"
+      appRoleId: "{{ roleId.stdout }}"
+- name: Authorize Graph role
+  ansible.builtin.command:
+    cmd: az rest --method post --uri {{ uri }} --body "{{ appRoleAssignmentsBody }}" --headers "Content-Type=application/json"
+  register: authorizeGraphRole
+  changed_when: true
+  failed_when: authorizeGraphRole.rc != 0 and not authorizeGraphRole.stderr is search('already exists')
+  vars:
+    uri: "https://graph.microsoft.com/v1.0/servicePrincipals/{{ scope_connector_identity.principalId }}/appRoleAssignments"
