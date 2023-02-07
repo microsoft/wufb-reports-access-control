@@ -7,6 +7,7 @@ import { DefaultAzureCredential } from "@azure/identity";
 import { LogsIngestionClient } from "@azure/monitor-ingestion";
 import { LogsQueryClient, LogsQueryResult, LogsQueryResultStatus, LogsTable } from "@azure/monitor-query";
 import { Client as GraphClient, PageCollection, PageIterator, PageIteratorCallback } from "@microsoft/microsoft-graph-client";
+import { Device } from "@microsoft/microsoft-graph-types";
 import * as fs from 'fs';
 import * as readline from 'readline';
 import findFast from "./find-fast";
@@ -55,13 +56,15 @@ export default class SyncService {
 
     // Work around a bug in the SDK where it's using an unsupported API version.
     // https://github.com/Azure/azure-sdk-for-js/issues/24369
-    this.managementClient.pipeline.addPolicy({ name: "API Version",
+    this.managementClient.pipeline.addPolicy({
+      name: "API Version",
       sendRequest: (request: PipelineRequest, next: SendRequest) => {
         let url = new URL(request.url);
         url.searchParams.set("api-version", "2022-10-01");
         request.url = url.toString();
         return next(request);
-    }}, { phase: "Serialize" });
+      }
+    }, { phase: "Serialize" });
   }
 
   private log(...args: any[]) {
@@ -133,22 +136,23 @@ export default class SyncService {
     this.log("Syncing workspace", workspace.name, "with scope", workspace.tags.wufb_scope_id);
 
     const allowedDevices = await this.getAllowedDevices(workspace);
+    if (allowedDevices.length) {
+      // Iterate over all tables
+      const tables = this.managementClient.tables.listByWorkspace(this.primaryWorkspaceResourceGroup, this.primaryWorkspace.name);
+      for await (const table of tables) {
+        // Skip tables that don't begin with UC
+        if (!table.name.startsWith("UC"))
+          continue;
 
-    // Iterate over all tables
-    const tables = this.managementClient.tables.listByWorkspace(this.primaryWorkspaceResourceGroup, this.primaryWorkspace.name);
-    for await (const table of tables) {
-      // Skip tables that don't begin with UC
-      if (!table.name.startsWith("UC"))
-        continue;
+        // Skip the aggregate table since contains tenant-wide data.
+        // Alternatively, synthesize new aggregate records after sync
+        // based on scoped records from UCDOStatus.
+        if (table.name === "UCDOAggregatedStatus")
+          continue;
 
-      // Skip the aggregate table since contains tenant-wide data.
-      // Alternatively, synthesize new aggregate records after sync
-      // based on scoped records from UCDOStatus.
-      if (table.name === "UCDOAggregatedStatus")
-        continue;
-
-      await this.syncTableWithCompare(workspace, table, allowedDevices);
-      await this.syncTableWithCursor(workspace, table, allowedDevices);
+        await this.syncTableWithCompare(workspace, table, allowedDevices);
+        await this.syncTableWithCursor(workspace, table, allowedDevices);
+      }
     }
 
     this.log("Finished syncing workspace", workspace.name, "with scope", workspace.tags.wufb_scope_id);
@@ -274,12 +278,12 @@ export default class SyncService {
   }
 
   // Wrap to make this easier to handle errors
-  async createReadStreamAsync(path: fs.PathLike, options?: BufferEncoding | any) : Promise<fs.ReadStream> {
+  async createReadStreamAsync(path: fs.PathLike, options?: BufferEncoding | any): Promise<fs.ReadStream> {
     return new Promise((resolve, reject) => {
-        const fileStream = fs.createReadStream(path, options);
-        fileStream.on('error', reject).on('open', () => {
-          resolve(fileStream);
-        });
+      const fileStream = fs.createReadStream(path, options);
+      fileStream.on('error', reject).on('open', () => {
+        resolve(fileStream);
+      });
     });
   }
 
@@ -290,7 +294,7 @@ export default class SyncService {
 
     // Validate AD group association
     if (!workspace.tags.wufb_scope_azure_ad_group_id) {
-      this.warn(`Workspace ${workspace.name} does not have tag 'wufb_scope_azure_ad_group_id' and therefore will receive all records from the tenant.`);
+      this.warn(`Workspace ${workspace.name} does not have tag 'wufb_scope_azure_ad_group_id' and therefore will receive no records from the tenant.`);
       return [];
     }
 
@@ -298,21 +302,18 @@ export default class SyncService {
     if (!fs.existsSync(deviceListPath)) {
       // A file does not exist so load directly from Graph
       try {
-        this.log("Calling Graph ... " + `/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device`);
-        const membersResponse: PageCollection = await this.graphClient.api(`/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device`).get();
-        this.log(membersResponse);
-        const callback: PageIteratorCallback = (data) => {
-          this.log(data);
-          // results.push(data.deviceId);
+        this.log(`Getting members from Graph for group ${workspace.tags.wufb_scope_azure_ad_group_id}`);
+        const membersResponse: PageCollection = await this.graphClient.api(`/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device?$select=id,deviceId`).get();
+        const callback: PageIteratorCallback = (data: Device) => {
+          results.push(data.deviceId);
           return true;
         };
         const pageIterator = new PageIterator(this.graphClient, membersResponse, callback);
         await pageIterator.iterate();
-        throw new Error("DONE");
-      } catch(error: any) {
-        this.error(error);
+        this.log(`Group ${workspace.tags.wufb_scope_azure_ad_group_id} had ${results.length} member(s)`);
+      } catch (error: any) {
+        this.warn(error);
       }
-      // TODO: Handle @odata.nextLink
     } else {
       // Open file for reading
       try {
@@ -337,16 +338,16 @@ export default class SyncService {
         }
 
         fileStream.close();
-      } catch(error) {
+      } catch (error) {
         this.warn(error);
       }
     }
 
     if (!results.length) {
-      this.warn(`${workspace.tags.wufb_scope_azure_ad_group_id} had no records and therefore ${workspace.name} will receive all records from the tenant.`);
+      this.warn(`${workspace.tags.wufb_scope_azure_ad_group_id} had no members and therefore ${workspace.name} will receive no records from the tenant.`);
     }
 
-    results.sort((a,b) => a.localeCompare(b));
+    results.sort((a, b) => a.localeCompare(b));
     return results;
   }
 
@@ -355,7 +356,7 @@ export default class SyncService {
     let rowsFiltered = 0;
     if (!allowedDevices.length) return rowsFiltered;
     const azureADDeviceIdIndex = page.columnDescriptors.findIndex(c => c.name === "AzureADDeviceId");
-    for(let r = page.rows.length - 1; r >= 0; r--) {
+    for (let r = page.rows.length - 1; r >= 0; r--) {
       if (!findFast(allowedDevices, page.rows[r][azureADDeviceIdIndex] as string)) {
         page.rows.splice(r, 1);
         rowsFiltered++;
@@ -369,7 +370,7 @@ export default class SyncService {
     let rowsFiltered = 0;
     if (!disallowedDevices.length) return rowsFiltered;
     const azureADDeviceIdIndex = page.columnDescriptors.findIndex(c => c.name === "AzureADDeviceId");
-    for(let r = page.rows.length - 1; r >= 0; r--) {
+    for (let r = page.rows.length - 1; r >= 0; r--) {
       if (findFast(disallowedDevices, page.rows[r][azureADDeviceIdIndex] as string)) {
         page.rows.splice(r, 1);
         rowsFiltered++;
@@ -496,13 +497,12 @@ export default class SyncService {
         duration: `P${this.maxDaysToSync}D`
       });
     }
-    catch(error) {
+    catch (error) {
       this.log(`[${workspace.name}.${tableName}]: ${kustoQuery}`);
       throw error;
     }
 
-    switch(result.status)
-    {
+    switch (result.status) {
       case LogsQueryResultStatus.Success:
         this.log(`[${workspace.name}.${tableName}]: ${result.tables[0].rows.length} rows returned.`);
         return result.tables[0]

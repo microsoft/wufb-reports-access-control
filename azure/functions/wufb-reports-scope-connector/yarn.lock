@@ -255,6 +255,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@microsoft/microsoft-graph-types@npm:^2.26.0":
+  version: 2.26.0
+  resolution: "@microsoft/microsoft-graph-types@npm:2.26.0"
+  checksum: a4391e8b9e9573eb577f0d2c38c773340b8f21c56342e672ce0f15469bbecd53acfc49a505ec6b18592b7f0de14e2f9a6477a6015d9837ead757795077d07ad6
+  languageName: node
+  linkType: hard
+
 "@tootallnate/once@npm:2":
   version: 2.0.0
   resolution: "@tootallnate/once@npm:2.0.0"
@@ -698,6 +705,7 @@ __metadata:
     "@azure/monitor-ingestion": ^1.0.0-beta.3
     "@azure/monitor-query": ^1.0.3
     "@microsoft/microsoft-graph-client": ^3.0.4
+    "@microsoft/microsoft-graph-types": ^2.26.0
     "@types/node": ^18.11.18
     isomorphic-fetch: ^3.0.0
     typescript: ^4.0.0
