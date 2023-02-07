@@ -85,6 +85,7 @@
     - name: Setup function app
       tags:
         - function_app
+        - function_app_create
       block:
         - name: Set fact function app name
           ansible.builtin.set_fact:
@@ -126,9 +127,44 @@
           ansible.builtin.set_fact:
             scope_connector_identity: "{{ configure_function_app_result.response.identity }}"
 
-    - name: Authorize function app
+    - name: Authorize function app to call Graph
       tags:
         - function_app
+        - function_app_authorize_graph
+      block:
+        - name: Get SP for Microsoft Graph
+          ansible.builtin.command:
+            cmd: >
+              az ad sp list --display-name "Microsoft Graph" --query "[0].id" --out tsv
+          register: graphResourceId
+          changed_when: true
+        - name: Get role ID for Group.Read.All
+          ansible.builtin.command:
+            cmd: >
+              az ad sp list --display-name "Microsoft Graph"
+              --query "[0].appRoles[?value=='Group.Read.All' && contains(allowedMemberTypes, 'Application')].id"
+              --output tsv
+          register: groupReadAllRoleId
+          changed_when: true
+        - name: Set request body
+          ansible.builtin.set_fact:
+            appRoleAssignmentsBody:
+              principalId: "{{ scope_connector_identity.principalId }}"
+              resourceId: "{{ graphResourceId.stdout }}"
+              appRoleId: "{{ groupReadAllRoleId.stdout }}"
+        - name: Authorize Graph role
+          ansible.builtin.command:
+            cmd: az rest --method post --uri {{ uri }} --body "{{ appRoleAssignmentsBody }}" --headers "Content-Type=application/json"
+          register: groupReadAllRoleId
+          changed_when: true
+          failed_when: groupReadAllRoleId.rc != 0 and not groupReadAllRoleId.stderr is search('already exists')
+          vars:
+            uri: "https://graph.microsoft.com/v1.0/servicePrincipals/{{ scope_connector_identity.principalId }}/appRoleAssignments"
+
+    - name: Authorize function app to workspaces and publishing endpoints
+      tags:
+        - function_app
+        - function_app_authorize_workspaces
       block:
         - name: Authorize scope connector to read resources in the resource group
           # The function app needs access to read resources to discover DCE, DCRs, and workspaces
@@ -152,10 +188,6 @@
             assignee_object_id: "{{ scope_connector_identity.principalId }}"
             role_definition_id: # Monitoring Metrics Publisher
               "/subscriptions/15820d8b-8b26-4182-8db6-7bd2be4491f6/providers/Microsoft.Authorization/roleDefinitions/3913510d-42f4-4e42-8a64-420c390055eb"
-
-# TODO: authorize the app to call Graph
-# https://learn.microsoft.com/en-us/azure/app-service/tutorial-connect-app-access-microsoft-graph-as-app-javascript?tabs=azure-cli
-# https://powers-hell.com/2022/09/12/authenticate-to-graph-in-azure-functions-with-managed-identites/
 
     - name: Deploy function app
       tags:
