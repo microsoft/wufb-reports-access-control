@@ -6,7 +6,7 @@ import { Context } from "@azure/functions";
 import { DefaultAzureCredential } from "@azure/identity";
 import { LogsIngestionClient } from "@azure/monitor-ingestion";
 import { LogsQueryClient, LogsQueryResult, LogsQueryResultStatus, LogsTable } from "@azure/monitor-query";
-import { Client as GraphClient } from "@microsoft/microsoft-graph-client";
+import { Client as GraphClient, PageCollection, PageIterator, PageIteratorCallback } from "@microsoft/microsoft-graph-client";
 import * as fs from 'fs';
 import * as readline from 'readline';
 import findFast from "./find-fast";
@@ -297,13 +297,21 @@ export default class SyncService {
     const deviceListPath = `${this.context.executionContext.functionDirectory}/groups/${workspace.tags.wufb_scope_azure_ad_group_id}.csv`;
     if (!fs.existsSync(deviceListPath)) {
       // A file does not exist so load directly from Graph
-      // try {
-      //   this.log("Calling Graph ... " + `/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device`);
-      //   let membersResponse = await this.graphClient.api(`/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device`).get();
-      //   this.log(membersResponse);
-      // } catch(error: any) {
-      //   this.error(error);
-      // }
+      try {
+        this.log("Calling Graph ... " + `/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device`);
+        const membersResponse: PageCollection = await this.graphClient.api(`/groups/${workspace.tags.wufb_scope_azure_ad_group_id}/members/microsoft.graph.device`).get();
+        this.log(membersResponse);
+        const callback: PageIteratorCallback = (data) => {
+          this.log(data);
+          // results.push(data.deviceId);
+          return true;
+        };
+        const pageIterator = new PageIterator(this.graphClient, membersResponse, callback);
+        await pageIterator.iterate();
+        throw new Error("DONE");
+      } catch(error: any) {
+        this.error(error);
+      }
       // TODO: Handle @odata.nextLink
     } else {
       // Open file for reading
