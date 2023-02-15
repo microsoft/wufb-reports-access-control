@@ -152,13 +152,13 @@
             scope: "{{ resource_group_response.state.id }}"
             assignee_object_id: "{{ scope_connector_identity.principalId }}"
             role_definition_id: # Reader
-              "/subscriptions/15820d8b-8b26-4182-8db6-7bd2be4491f6/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
+              "/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
         - name: Authorize scope connector to read data from primary workspace
           azure.azcollection.azure_rm_roleassignment:
             scope: "{{ primary_workspace.id }}"
             assignee_object_id: "{{ scope_connector_identity.principalId }}"
             role_definition_id: # Log Analytics Reader
-              "/subscriptions/15820d8b-8b26-4182-8db6-7bd2be4491f6/providers/Microsoft.Authorization/roleDefinitions/73c42c96-874c-492b-b04d-ab87d138a893"
+              "/providers/Microsoft.Authorization/roleDefinitions/73c42c96-874c-492b-b04d-ab87d138a893"
         - name: Authorize scope connector to publish to the DCE using each scoped DCR
           loop: "{{ scopes | dict2items }}"
           loop_control:
@@ -167,7 +167,7 @@
             scope: "{{ scope_item.value.dcr_resource_id }}"
             assignee_object_id: "{{ scope_connector_identity.principalId }}"
             role_definition_id: # Monitoring Metrics Publisher
-              "/subscriptions/15820d8b-8b26-4182-8db6-7bd2be4491f6/providers/Microsoft.Authorization/roleDefinitions/3913510d-42f4-4e42-8a64-420c390055eb"
+              "/providers/Microsoft.Authorization/roleDefinitions/3913510d-42f4-4e42-8a64-420c390055eb"
 
     - name: Deploy function app
       tags:
