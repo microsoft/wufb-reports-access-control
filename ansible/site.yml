@@ -17,10 +17,10 @@
             provider: OperationalInsights
             resource_type: workspaces
             resource_name: "{{ primary_workspace_name }}"
-          register: primary_workspace
+          register: primary_workspace_response
         - name: Save primary workspace to variable
           ansible.builtin.set_fact:
-            primary_workspace: "{{ primary_workspace.response[0] }}"
+            primary_workspace: "{{ primary_workspace_response.response[0] }}"
 
     - name: Gather schema for UC tables
       block:
