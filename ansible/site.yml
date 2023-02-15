@@ -100,6 +100,7 @@
               WEBSITE_NODE_DEFAULT_VERSION: "~18"
               WEBSITE_RUN_FROM_PACKAGE: "1"
               AZURE_SUBSCRIPTION_ID: "{{ subscription_id }}"
+              TARGET_RESOURCE_GROUP: "{{ target_resource_group }}"
               PRIMARY_WORKSPACE_RESOURCE_GROUP: "{{ primary_workspace_resource_group }}"
               PRIMARY_WORKSPACE_NAME: "{{ primary_workspace_name }}"
               MAX_DAYS_TO_SYNC: "{{ function_app_max_days_to_sync }}"

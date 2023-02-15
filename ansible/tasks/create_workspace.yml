@@ -37,17 +37,17 @@
   delay: 5
   retries: 6
 
-- name: "Create workspace : Pause for 3 seconds as Azure needs additional time before creating tables"
-  tags:
-    - setup_workspace_tables
-  ansible.builtin.pause:
-    seconds: 3
+# - name: "Create workspace : Pause for 3 seconds as Azure needs additional time before creating tables"
+#   tags:
+#     - setup_workspace_tables
+#   ansible.builtin.pause:
+#     seconds: 3
 
-- name: "Create workspace : Setup tables"
-  tags:
-    - setup_workspace_tables
-  loop: "{{ uc_tables }}"
-  loop_control:
-    loop_var: target_table
-    label: "{{ target_table.name }}"
-  ansible.builtin.include_tasks: create_workspace_table.yml
+# - name: "Create workspace : Setup tables"
+#   tags:
+#     - setup_workspace_tables
+#   loop: "{{ uc_tables }}"
+#   loop_control:
+#     loop_var: target_table
+#     label: "{{ target_table.name }}"
+#   ansible.builtin.include_tasks: create_workspace_table.yml
