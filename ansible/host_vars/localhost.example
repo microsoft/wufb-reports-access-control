@@ -31,8 +31,9 @@ target_resource_prefix: wufb-reports-
 ## Storage account for function app
 function_app_storage_account_name: wufbreportsscopes
 
-## Maximum number of days to sync
-function_app_max_days_to_sync: 7
+## Maximum number of days to sync.
+## Not currently recommended to increase beyond 2 because LA overwrites TimeGenerated if > 48 hours.
+function_app_max_days_to_sync: 2
 
 # Python 3.11 has breaking changes to the `inspect`` module. Use 3.10 for now.
 ansible_python_interpreter: "/usr/local/bin/python3.10"
