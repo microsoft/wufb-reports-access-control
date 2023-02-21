@@ -25,7 +25,7 @@ All access groups will use the same Azure Monitor Workbook. WUfB reports has bee
 
 ## Permissions required for deployment
 
-The user or [service principal](https://learn.microsoft.com/en-us/azure/active-directory/develop/app-objects-and-service-principals#service-principal-object) running the automation should be an Azure subscription [Owner](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#owner) to ensure necessary providers and resources can be enabled automatically.
+The user or [service principal](https://learn.microsoft.com/en-us/azure/active-directory/develop/app-objects-and-service-principals#service-principal-object) running the automation to deploy infrastructure should be an Azure subscription [Owner](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#owner) to ensure necessary providers and resources can be enabled automatically.
 
 ## Authorization
 
