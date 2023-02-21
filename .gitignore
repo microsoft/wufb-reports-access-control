@@ -354,3 +354,4 @@ azure/functions/*.zip
 
 # Ignore diagram locks and backups
 docs/**/*.bkp
+docs/**/*.dtmp
