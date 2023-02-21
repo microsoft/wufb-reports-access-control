@@ -8,9 +8,9 @@ subscription_id: <guid>
 ## Define access scopes and associated Azure AD group (idenitifed by objectId)
 scopes:
   contoso:
-    azure_ad_group_id: ~
+    azure_ad_group_id: <guid>
   fabrikam:
-    azure_ad_group_id: ~
+    azure_ad_group_id: <guid>
 
 ## Properties for the primary workspace to be used as input for data transformations
 primary_workspace_name: <name>
@@ -29,7 +29,7 @@ target_resource_group: wufb-reports-access-control
 target_resource_prefix: wufb-reports-
 
 ## Storage account for function app
-function_app_storage_accout_name: wufbreportsscopes
+function_app_storage_account_name: wufbreportsscopes
 
 ## Maximum number of days to sync
 function_app_max_days_to_sync: 7

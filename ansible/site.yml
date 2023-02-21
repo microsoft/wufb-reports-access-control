@@ -78,7 +78,7 @@
     - name: Create storage account for function app
       azure.azcollection.azure_rm_storageaccount:
         resource_group: "{{ target_resource_group }}"
-        name: "{{ function_app_storage_accout_name }}{{ tenant_id[:4] }}" # If collisions occur, change to tenant_id | hash('sha1')[:24]
+        name: "{{ function_app_storage_account_name }}{{ tenant_id[:4] }}" # If collisions occur, change to tenant_id | hash('sha1')[:24]
         type: Standard_LRS
       register: create_storage_account_result
 
@@ -94,7 +94,7 @@
           azure.azcollection.azure_rm_functionapp:
             resource_group: "{{ target_resource_group }}"
             name: "{{ function_app_name }}"
-            storage_account: "{{ function_app_storage_accout_name }}{{ tenant_id[:4] }}"
+            storage_account: "{{ function_app_storage_account_name }}{{ tenant_id[:4] }}"
             app_settings:
               FUNCTIONS_EXTENSION_VERSION: "~4"
               WEBSITE_NODE_DEFAULT_VERSION: "~18"
