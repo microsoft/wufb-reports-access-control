@@ -351,3 +351,6 @@ MigrationBackup/
 
 # Ignore build outputs
 azure/functions/*.zip
+
+# Ignore diagram locks and backups
+docs/**/*.bkp
