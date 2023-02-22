@@ -2,9 +2,9 @@
 
 ## Overview
 
-This solution deploys WUfB reports infrastructure for partioning data and securing access using Azure RBAC. As an administrator you can define one or more *scopes* to indicate that records for a given Azure AD group of devices should be exported from the tenant workspace to a scoped workspace that can be secured using Azure RBAC.
+This solution uses [Ansible](https://www.ansible.com) to deploy WUfB reports infrastructure for partioning data and securing access using Azure RBAC. As an administrator you can define one or more *scopes* to indicate that records for a given Azure AD group of devices should be exported from the tenant workspace to a scoped workspace that can be secured using Azure RBAC.
 
-The `ansible` folder of the project contains an [Ansible](https://www.ansible.com) playbook which, after configuration, can deploy the necessary infrastructure to your Azure tenant.
+The `ansible` folder of the project contains an Ansible playbook which, after configuration, can deploy the necessary infrastructure to your Azure tenant.
 
 At the high-level, this includes the following resources:
 
@@ -19,56 +19,113 @@ At the high-level, this includes the following resources:
 
 All access groups will use the same Azure Monitor Workbook. WUfB reports has been updated to provide a drop-down workspace chooser.
 
-## Architecture
+### Architecture
 
 ![Architecture Diagram](docs/attachments/wufb-reports-access-control-architecture.drawio.png)
 
-## Permissions required for deployment
+### Permissions required for deployment
 
 The user or [service principal](https://learn.microsoft.com/en-us/azure/active-directory/develop/app-objects-and-service-principals#service-principal-object) running the automation to deploy infrastructure should be an Azure subscription [Owner](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#owner) to ensure necessary providers and resources can be enabled automatically.
 
-## Authorization
+### Current limitations
 
-### Create a service principal
+- **No support for nested Azure AD groups.** Only direct group members are considered at present. Nested support could be added by modifying the Azure Function.
+- **The solution assumes a single subscription and target resource group.** This was done to expedite creation of the solution, however it remains possible in the future to update the `scopes` definition to allow more granular control. In the interim, note that *this design choice has security implications*. If report readers are given access to modify Log Analytics workspaces they will have access to modify the tags that control data routing to each workspace. If users must be granted write access to Log Analytics, the recommendation is to do so only in a separate subscription or resource group. Then, create an isolated, read-only WUfB Reports subscription or resource group where users do not have access to create or modify Log Analytics workspaces and use that as the target for this deployment.
+- **Aggregated status is not computed.** Aggregated status is tenant-wide in the primary workspace and therefore scoped workspaces would need to compute the aggregate for their device set separately. The Azure Function doesn't yet perform that process.
 
-### Authorize service principal for subscription
+## Configuration
 
-- Access control (IAM)
-  - Add role assignment. Needs Owner to have permission to assign RBAC to other resources created.
+Before running the deployment, you must tailor the configuration to your tenant by copying [ansible/host_vars/localhost.example](ansible/host_vars/localhost.example) to `ansible/host_vars/localhost` and then editing the values in the file.
 
-### Authorize service principal for Graph APIs
+```yaml
+---
+# Required configuration
 
-- Application.ReadWrite.OwnedBy
-- GroupMember.Read.All
+## Tenant info
+tenant_id: <guid>
+subscription_id: <guid>
 
-### Generate client secret
+## Define access scopes and associated Azure AD group (idenitifed by objectId)
+scopes:
+  contoso:
+    azure_ad_group_id: <guid>
+  fabrikam:
+    azure_ad_group_id: <guid>
 
-### Add credentials file
+## Properties for the primary workspace to be used as input for data transformations
+primary_workspace_name: <name>
+primary_workspace_resource_group: <resource_group>
 
-https://docs.ansible.com/ansible/latest/scenario_guides/guide_azure.html#storing-in-a-file
+## All resources will be deployed to this location (e.g. westus2)
+target_resource_location: <location>
 
-```ini
-[default]
-subscription_id=xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-client_id=xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-secret=xxxxxxxxxxxxxxxxx
-tenant=xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+# Optional configuration
+
+## All resources will be created under this group
+target_resource_group: wufb-reports-access-control
+
+## All resources will use this prefix and will be suffixed by the
+## playbook with a resource type or scope.
+target_resource_prefix: wufb-reports-
+
+## Storage account for function app
+function_app_storage_account_name: wufbreportsscopes
+
+## Maximum number of days to sync.
+## Not currently recommended to increase beyond 2 because LA overwrites TimeGenerated if > 48 hours.
+function_app_max_days_to_sync: 2
+
+# Python 3.11 has breaking changes to the `inspect`` module. Use 3.10 for now.
+ansible_python_interpreter: "/usr/local/bin/python3.10"
 ```
 
-## Ansible
+### Required parameters
 
-### Install Azure collection and pre-requisites
+| Parameter                        | Description                                                                                                                                                                                                                               |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tenant_id                        | The GUID for your tenant.                                                                                                                                                                                                                 |
+| subscription_id                  | The GUID for the subscription that resources will be created in.                                                                                                                                                                          |
+| scopes                           | This is a dictionary of the scopes you want to be created. Each named scope is associated with the directory `id` of an Azure AD group containing a list of devices included within the scope. Nested groups are not currently supported. |
+| primary_workspace_name           | This is the primary workspace containing all data for the tenant that data will be exported from.                                                                                                                                         |
+| primary_workspace_resource_group | The resource group containing the primary workspace.                                                                                                                                                                                      |
+| target_resource_location         | The Azure location or [region](https://azure.microsoft.com/en-us/explore/global-infrastructure/geographies/#overview) to store created resources.                                                                                         |
+
+### Optional parameters
+
+| Parameter                         | Description                                                                                                                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| target_resource_group             | The resource group to contain created resources.                                                                                                                                                 |
+| target_resource_prefix            | The resource prefix for all created resources.                                                                                                                                                   |
+| function_app_storage_account_name | The globally unique name of the storage account for the function app. A portion of the tenant ID is also used to facilitate uniqueness.                                                          |
+| function_app_max_days_to_sync     | The maximum number of days to sync back in time when the function is executed. Values greater than 48 hours overwrite the TimeGenerated field at the target which could result in unusable data. |
+| ansible_python_interpreter        | Path to the Python interpreter to use when running Ansible.                                                                                                                                      |
+
+## Installation of required tools
+
+### Ansible
+
+To install Ansible, see [Ansible installation](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html).
+
+#### Azure collection
+
+After Ansible is installed, ensure all requirements of the [Azure Collection](https://docs.ansible.com/ansible/latest/collections/azure/azcollection/index.html) have been installed.
 
 ```bash
 ansible-galaxy collection install azure.azcollection
 pip install -r ~/.ansible/collections/ansible_collections/azure/azcollection/requirements-azure.txt
 ```
 
-### Install Node.js 18
+### Node.js 18
 
-### Install Azure function core tools
+Install the latest version of [Node.js](https://nodejs.org/en/).
 
-https://github.com/Azure/azure-functions-core-tools
+### Azure CLI
+
+Install the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/).
+
+### Azure Functions Core Tools
+
+Install the [Azure Functions Core Tools](https://github.com/Azure/azure-functions-core-tools).
 
 #### Windows
 
@@ -83,6 +140,8 @@ brew tap azure/functions
 brew install azure-functions-core-tools@4
 ```
 
+## Authorization
+
 ### Login to Azure
 
 - For authentication with Azure you can pass parameters, set environment variables, use a profile stored in ~/.azure/credentials, or log in before you run your tasks or playbook with `az login`.
@@ -91,53 +150,38 @@ brew install azure-functions-core-tools@4
 - To authenticate via Active Directory user, pass ad_user and password, or set AZURE_AD_USER and AZURE_PASSWORD in the environment.
 - Alternatively, credentials can be stored in `~/.azure/credentials`. This is an ini file containing a `[default]` section and the following keys: subscription_id, client_id, secret and tenant or subscription_id, ad_user and password. It is also possible to add additional profiles. Specify the profile by passing profile or setting AZURE_PROFILE in the environment.
 
-### Configure secure vars
+See [Authenticating with Azure](https://docs.ansible.com/ansible/latest/scenario_guides/guide_azure.html#authenticating-with-azure) for more information.
 
-Add `scope_connector_credentials.yml` to `secure_vars`.
+## Run the playbook
 
-### Customize host vars
-
-Customize scopes and other vars in `host_vars/localhost`.
-
-### Run the playbook
+From the `ansible` folder, the following command will run the playbook to initiate deployment of infrastructure. You must have previously logged into Azure and also configured values for your tenant, including the target scopes, by modifying the `localhost` configuration file.
 
 ```bash
 ansible-playbook -i inventory site.yml
 ```
 
-### Waiting for resources to be ready
+## Using the solution
 
-```yaml
-    - name: Wait for namespace to be ready
-      azure_rm_resource_facts:
-        api_version: '2017-04-01'
-        resource_group: "{{ resource_group }}"
-        provider: eventhub
-        resource_type: namespaces
-        resource_name: "{{ namespacename }}"
-      register: output
-      until: output.response[0].properties.status == 'Active'
-      delay: 10
-```
+After the solution has been deployed, the Azure Function must be triggered once to export data from the primary workspace to the scoped workspaces.
+
+Once the Log Analytics workspaces have data, users will be able to open the WUfB reports workbook to see data scoped to their access.
+
+The planned experience is to provide a drop-down allowing users to change the active workspace used by the workbook by selecting from a list of available subscriptions and their workspaces.
 
 ## Contributing
 
-This project welcomes contributions and suggestions.  Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
+This project welcomes contributions and suggestions.  Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
 
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
 
 This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
 
 ## Trademarks
 
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft 
-trademarks or logos is subject to and must follow 
-[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft  trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
+
 Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
+
 Any use of third-party trademarks or logos are subject to those third-party's policies.
