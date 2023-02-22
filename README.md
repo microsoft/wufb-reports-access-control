@@ -2,7 +2,7 @@
 
 ## Overview
 
-This solution uses [Ansible](https://www.ansible.com) to deploy WUfB reports infrastructure for partioning data and securing access using Azure RBAC. As an administrator you can define one or more *scopes* to indicate that records for a given Azure AD group of devices should be exported from the tenant workspace to a scoped workspace that can be secured using Azure RBAC.
+This solution uses [Ansible](https://www.ansible.com) to deploy WUfB reports infrastructure for partitioning data and securing access using Azure RBAC. As an administrator you can define one or more *scopes* to indicate that records for a given Azure AD group of devices should be exported from the tenant workspace to a scoped workspace that can be secured using Azure RBAC.
 
 The `ansible` folder of the project contains an Ansible playbook which, after configuration, can deploy the necessary infrastructure to your Azure tenant.
 
