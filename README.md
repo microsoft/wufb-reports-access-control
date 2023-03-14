@@ -29,9 +29,9 @@ The user or [service principal](https://learn.microsoft.com/en-us/azure/active-d
 
 ### Current limitations
 
+- **Aggregated delivery optimization status is not computed.** Aggregated status is tenant-wide in the primary workspace and therefore scoped workspaces would need to compute the aggregate for their device set separately. The Azure Function doesn't yet perform that process.
 - **No support for nested Azure AD groups.** Only direct group members are considered at present. Nested support could be added by modifying the Azure Function.
-- **The solution assumes a single subscription and target resource group.** This was done to expedite creation of the solution, however it remains possible in the future to update the `scopes` definition to allow more granular control. In the interim, note that *this design choice has security implications*. If report readers are given access to modify Log Analytics workspaces they will have access to modify the tags that control data routing to each workspace. If users must be granted write access to Log Analytics, the recommendation is to do so only in a separate subscription or resource group. Then, create an isolated, read-only WUfB Reports subscription or resource group where users do not have access to create or modify Log Analytics workspaces and use that as the target for this deployment.
-- **Aggregated status is not computed.** Aggregated status is tenant-wide in the primary workspace and therefore scoped workspaces would need to compute the aggregate for their device set separately. The Azure Function doesn't yet perform that process.
+- **The solution assumes a single subscription and target resource group.** This may or may not be relevant for your tenant. Tenants that need greater control can extend the solution by modifying the Ansible project.
 
 ## Configuration
 
@@ -45,7 +45,7 @@ Before running the deployment, you must tailor the configuration to your tenant 
 tenant_id: <guid>
 subscription_id: <guid>
 
-## Define access scopes and associated Azure AD group (idenitifed by objectId)
+## Define access scopes and associated Azure AD group (identified by objectId)
 scopes:
   contoso:
     azure_ad_group_id: <guid>
