@@ -36,4 +36,5 @@ function_app_storage_account_name: wufbreportsscopes
 function_app_max_days_to_sync: 2
 
 # Python 3.11 has breaking changes to the `inspect`` module. Use 3.10 for now.
-ansible_python_interpreter: "/usr/local/bin/python3.10"
+# Uncomment and set the target path if you need to specify a specific interpreter.
+# ansible_python_interpreter: "/usr/local/bin/python3.10"
