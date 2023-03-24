@@ -75,12 +75,19 @@
         loop_var: scope_item
       ansible.builtin.include_tasks: tasks/create_dcr.yml
 
-    - name: Create storage account for function app
-      azure.azcollection.azure_rm_storageaccount:
-        resource_group: "{{ target_resource_group }}"
-        name: "{{ function_app_storage_account_name }}{{ tenant_id[:4] }}" # If collisions occur, change to tenant_id | hash('sha1')[:24]
-        type: Standard_LRS
-      register: create_storage_account_result
+    - name: Setup storage account for function app
+      block:
+        - name: Register storage provider
+          ansible.builtin.command:
+            cmd: >
+              az provider register --namespace 'Microsoft.Storage'
+          changed_when: true
+        - name: Create storage account for function app
+          azure.azcollection.azure_rm_storageaccount:
+            resource_group: "{{ target_resource_group }}"
+            name: "{{ function_app_storage_account_name }}{{ tenant_id[:4] }}" # If collisions occur, change to tenant_id | hash('sha1')[:24]
+            type: Standard_LRS
+          register: create_storage_account_result
 
     - name: Setup function app
       tags:
