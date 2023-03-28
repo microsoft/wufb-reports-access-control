@@ -4,7 +4,7 @@ import { OperationalInsightsManagementClient, Table, Workspace } from "@azure/ar
 import { PipelineRequest, SendRequest } from "@azure/core-rest-pipeline";
 import { Context } from "@azure/functions";
 import { DefaultAzureCredential } from "@azure/identity";
-import { LogsIngestionClient } from "@azure/monitor-ingestion";
+import { AggregateLogsUploadError, LogsIngestionClient } from "@azure/monitor-ingestion";
 import { LogsQueryClient, LogsQueryResult, LogsQueryResultStatus, LogsTable } from "@azure/monitor-query";
 import { Client as GraphClient, PageCollection, PageIterator, PageIteratorCallback } from "@microsoft/microsoft-graph-client";
 import { Device } from "@microsoft/microsoft-graph-types";
@@ -384,14 +384,18 @@ export default class SyncService {
   private async writePage(ruleId: string, streamName: string, page: LogsTable) {
     // Set the maximum concurrency to 1 to prevent concurrent requests entirely
     this.log(`Writing ${page.rows.length} rows of page to stream ${streamName} of ${ruleId}`);
-    const result = await this.ingestionClient.upload(ruleId, streamName, this.getPageAsObjectArray(page), { maxConcurrency: 1 });
-    if (result.status !== "Success") {
-      this.error("Some logs have failed to complete ingestion. Upload status=", result.status);
-      for (const error of result.errors) {
-        this.error(`Error - ${JSON.stringify(error.cause)}`);
-        this.error(`Log - ${JSON.stringify(error.failedLogs)}`);
+    try {
+      await this.ingestionClient.upload(ruleId, streamName, this.getPageAsObjectArray(page), { maxConcurrency: 1 });
+    } catch (error: any) {
+      const uploadError = error as AggregateLogsUploadError
+      if (uploadError) {
+        this.error("Some logs have failed to complete ingestion.");
+        for (const error of uploadError.errors) {
+          this.error(`Error - ${JSON.stringify(error.cause)}`);
+          this.error(`Log - ${JSON.stringify(error.failedLogs)}`);
+        }
+        throw new Error(`Some logs have failed to complete ingestion.`);
       }
-      throw new Error(`Some logs have failed to complete ingestion. Upload status=${result.status}`);
     }
     this.log(`Write success.`);
   }
