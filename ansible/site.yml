@@ -182,6 +182,13 @@
         - function_app
         - deploy_function_app
       block:
+        - name: Install function app dependencies
+          ansible.builtin.command:
+            cmd: npm install
+          args:
+            chdir: ../azure/functions/wufb-reports-scope-connector
+          changed_when: true
+
         - name: Build function app
           ansible.builtin.command:
             cmd: npm run build
