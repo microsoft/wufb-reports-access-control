@@ -115,6 +115,11 @@ ansible-galaxy collection install azure.azcollection
 pip install -r ~/.ansible/collections/ansible_collections/azure/azcollection/requirements-azure.txt
 ```
 
+If you installed Ansible core, you will need to install the following additional collections:
+
+- [Ansible.utils](https://docs.ansible.com/ansible/latest/collections/ansible/utils/index.html)
+- [Community.general](https://docs.ansible.com/ansible/latest/collections/community/general/index.html)
+
 ### Node.js 18
 
 Install the latest version of [Node.js](https://nodejs.org/en/).
