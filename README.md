@@ -165,6 +165,28 @@ From the `ansible` folder, the following command will run the playbook to initia
 ansible-playbook -i inventory site.yml
 ```
 
+### Optional: Run for separate roles
+
+Some organizations may wish to deploy the infrastructure in separate steps according to access role. Therefore, certain project tasks have been tagged, and Ansible allows for skipping or running a playbook with matching tags. The following commands can be used to run steps for each role individually.
+
+#### Create resources as subscription owner
+
+After authenticating with a user that has Azure subscription *Owner* permissions, the following command will create necessary resources but will skip the Microsoft Graph authorization step which requires a different role.
+
+```bash
+ansible-playbook -i inventory site.yml --skip-tags "function_app_authorize_graph" 
+```
+
+#### Grant Graph API permissions
+
+After authenticating with a user that has *Privileged Role Administrator* or *Global Administrator* Azure AD roles, the following command will authorize the Azure Function to call the Microsoft Graph for enumerating device group membership.
+
+You will need to replace `<objectId>` which you can obtain from the Azure Portal for the `wufb-scope-connector` Function App under its `Function App > Settings > Identity > Object (principal) ID` property.
+
+```bash
+ansible-playbook -i inventory site.yml --tags "function_app_authorize_graph" --extra-vars '{"scope_connector_identity":{"principalId": "<objectId>"}}'
+```
+
 ## Using the solution
 
 After the solution has been deployed, the Azure Function must be triggered once to export data from the primary workspace to the scoped workspaces.
