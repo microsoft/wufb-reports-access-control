@@ -5,5 +5,6 @@
   "azureFunctions.projectRuntime": "~4",
   "debug.internalConsoleOptions": "neverOpen",
   "azureFunctions.projectSubpath": "azure/functions/wufb-reports-scope-connector",
-  "azureFunctions.preDeployTask": "npm prune (functions)"
+  "azureFunctions.preDeployTask": "npm prune (functions)",
+  "ansible.python.interpreterPath": "/usr/local/bin/python3"
 }
