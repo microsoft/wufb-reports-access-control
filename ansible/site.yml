@@ -26,6 +26,7 @@
       block:
         - name: Get table schema from primary Log Analytics workspace
           azure.azcollection.azure_rm_resource_info:
+            api_version: 2022-10-01
             resource_group: "{{ primary_workspace_resource_group }}"
             provider: OperationalInsights
             resource_type: workspaces
